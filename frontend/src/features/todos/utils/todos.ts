@@ -23,6 +23,13 @@ export function validateTodo(input: TodoInput): Record<string, string> {
   return errors
 }
 
+function matchesStatus(todo: Todo, filter: Filter): boolean {
+  if (filter === 'active') return !todo.completed
+  if (filter === 'completed') return todo.completed
+  if (filter === 'overdue') return isOverdue(todo)
+  return true
+}
+
 export function selectTodos(
   todos: Todo[],
   filter: Filter,
@@ -32,9 +39,7 @@ export function selectTodos(
   const search = query.trim().toLocaleLowerCase('en')
   return todos
     .filter((todo) => {
-      const statusMatches =
-        filter === 'all' ||
-        (filter === 'completed' ? todo.completed : !todo.completed)
+      const statusMatches = matchesStatus(todo, filter)
       return (
         statusMatches &&
         `${todo.title} ${todo.description}`
