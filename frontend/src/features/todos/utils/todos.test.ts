@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { selectTodos } from './todos'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { formatDate, isOverdue, selectTodos, validateTodo } from './todos'
 import type { Todo } from '../types'
 
 const base: Todo = {
@@ -29,5 +29,93 @@ describe('selectTodos', () => {
     const todos = [base, high]
     expect(selectTodos(todos, 'all', '', 'priority')).toEqual([high, base])
     expect(todos).toEqual([base, high])
+  })
+
+  it('sorts by due date with undated tasks last', () => {
+    const early: Todo = { ...base, id: 2, due_date: '2026-10-01' }
+    const late: Todo = { ...base, id: 3, due_date: '2026-11-01' }
+    expect(selectTodos([base, late, early], 'all', '', 'due')).toEqual([
+      early,
+      late,
+      base,
+    ])
+  })
+
+  it('breaks priority and due date ties by newest id', () => {
+    const a: Todo = { ...base, id: 2, due_date: '2026-10-01' }
+    const b: Todo = { ...base, id: 3, due_date: '2026-10-01' }
+    expect(selectTodos([a, b], 'all', '', 'priority')).toEqual([b, a])
+    expect(selectTodos([a, b], 'all', '', 'due')).toEqual([b, a])
+  })
+
+  it('sorts newest first and breaks ties by id', () => {
+    const newer: Todo = { ...base, id: 2, created_at: '2026-10-02T12:00:00Z' }
+    const tie: Todo = { ...base, id: 3 }
+    expect(selectTodos([base, newer, tie], 'all', '', 'newest')).toEqual([
+      newer,
+      tie,
+      base,
+    ])
+  })
+
+  it('shows only completed tasks for the completed filter', () => {
+    const done: Todo = { ...base, id: 2, completed: true }
+    expect(selectTodos([base, done], 'completed', '', 'newest')).toEqual([done])
+  })
+})
+
+describe('validateTodo', () => {
+  const valid = {
+    title: 'Task',
+    description: '',
+    priority: 'low' as const,
+    due_date: null,
+    completed: false,
+  }
+
+  it('accepts a valid task', () => {
+    expect(validateTodo({ ...valid, due_date: '2026-02-28' })).toEqual({})
+  })
+
+  it('rejects a blank title', () => {
+    expect(validateTodo({ ...valid, title: '   ' })).toEqual({
+      title: 'Enter a task title.',
+    })
+  })
+
+  it('enforces the title and description length limits', () => {
+    expect(validateTodo({ ...valid, title: 'a'.repeat(120) })).toEqual({})
+    expect(validateTodo({ ...valid, title: 'a'.repeat(121) })).toEqual({
+      title: 'The title must be at most 120 characters.',
+    })
+    expect(validateTodo({ ...valid, description: 'a'.repeat(2001) })).toEqual({
+      description: 'The description must be at most 2000 characters.',
+    })
+  })
+
+  it('rejects malformed and non-existent dates', () => {
+    const error = { due_date: 'Enter a valid date.' }
+    expect(validateTodo({ ...valid, due_date: '2026-02-30' })).toEqual(error)
+    expect(validateTodo({ ...valid, due_date: '10/15/2026' })).toEqual(error)
+  })
+})
+
+describe('isOverdue', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('is overdue only for open tasks due before today', () => {
+    vi.setSystemTime(new Date(2026, 9, 15, 12))
+    expect(isOverdue({ ...base, due_date: '2026-10-14' })).toBe(true)
+    expect(isOverdue({ ...base, due_date: '2026-10-15' })).toBe(false)
+    expect(isOverdue({ ...base, due_date: null })).toBe(false)
+    expect(
+      isOverdue({ ...base, due_date: '2026-10-14', completed: true }),
+    ).toBe(false)
+  })
+})
+
+describe('formatDate', () => {
+  it('formats a date in en-GB style', () => {
+    expect(formatDate('2026-10-05')).toBe('5 Oct 2026')
   })
 })
