@@ -20,6 +20,16 @@ it('answers the health check after querying the database', async () => {
   expect(findFirst).toHaveBeenCalledWith({ select: { id: true } });
 });
 
+it('fails the health check when the database is unreachable', async () => {
+  const { database, app } = setup();
+  vi.spyOn(database.todo, 'findFirst').mockRejectedValue(new Error('connection refused'));
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const response = await request(app).get('/api/health');
+  expect(response.status).toBe(500);
+  expect(response.body).toEqual({ detail: 'Internal Server Error' });
+  expect(consoleError).toHaveBeenCalledWith(expect.objectContaining({ message: 'connection refused' }));
+});
+
 it('serves tasks through the full app', async () => {
   const { database, app } = setup();
   vi.spyOn(database.todo, 'findMany').mockResolvedValue([record]);

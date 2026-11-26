@@ -3,7 +3,7 @@ import { resolveDatabaseUrl } from '../src/core/config.ts';
 
 afterEach(() => vi.unstubAllEnvs());
 
-const parts = { POSTGRES_USER: 'user', POSTGRES_PASSWORD: 'p@ss', POSTGRES_HOST: 'db', DB_PORT: '5433', POSTGRES_DB: 'my db' };
+const parts = { POSTGRES_USER: 'user', POSTGRES_PASSWORD: 'p@ss', POSTGRES_HOST: 'db', DB_PORT: '5433', POSTGRES_DB: 'my/db' };
 
 function stub(values: Record<string, string | undefined>) {
   for (const name of ['DATABASE_URL', ...Object.keys(parts)]) vi.stubEnv(name, values[name]);
@@ -21,7 +21,7 @@ it('uses DATABASE_URL and normalizes the psycopg scheme', () => {
 
 it('builds the URL from the individual variables with encoding', () => {
   stub(parts);
-  expect(resolveDatabaseUrl()).toBe('postgresql://user:p%40ss@db:5433/my%20db');
+  expect(resolveDatabaseUrl()).toBe('postgresql://user:p%40ss@db:5433/my%2Fdb');
 });
 
 it.each(Object.keys(parts))('throws when %s is missing', (name) => {

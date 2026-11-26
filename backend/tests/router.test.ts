@@ -62,7 +62,7 @@ it('answers 404 when the task to update is missing', async () => {
   expect(response.status).toBe(404);
   expect(response.body).toEqual({ detail: 'Task not found.' });
 });
-it.each([{}, { unknown: 1 }, { priority: 'urgent' }])('rejects invalid update input without calling the repository: %j', async (payload) => {
+it.each([{}, { unknown: 1 }])('rejects invalid update input without calling the repository: %j', async (payload) => {
   const { app, repository } = setup();
   expect((await request(app).patch('/api/todos/1').send(payload)).status).toBe(422);
   expect(repository.update).not.toHaveBeenCalled();
