@@ -76,10 +76,18 @@ it('creates a new task and reports a successful save', async () => {
   await waitFor(() => expect(onSaved).toHaveBeenCalledWith('New task added.'))
   expect(create).toHaveBeenCalledWith(todoFixture)
   expect(update).not.toHaveBeenCalled()
+})
+
+it('opens an empty form for a new task', () => {
+  mockMutations({}, {})
+  render(
+    <TodoEditor todo="new" busy={false} onClose={vi.fn()} onSaved={vi.fn()} />,
+  )
   expect(screen.getByText('initial: none')).toBeInTheDocument()
 })
 
 it('updates an existing task and reports saved changes', async () => {
+  const user = userEvent.setup()
   const update = vi.fn().mockResolvedValue(todoFixture)
   const create = vi.fn()
   mockMutations({ mutateAsync: create }, { mutateAsync: update })
@@ -94,7 +102,7 @@ it('updates an existing task and reports saved changes', async () => {
   )
   expect(screen.getByRole('dialog', { name: 'Edit task' })).toBeVisible()
   expect(screen.getByText(`initial: ${todoFixture.title}`)).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Submit form' }))
+  await user.click(screen.getByRole('button', { name: 'Submit form' }))
   await waitFor(() => expect(onSaved).toHaveBeenCalledWith('Changes saved.'))
   expect(update).toHaveBeenCalledWith({
     id: todoFixture.id,
@@ -104,6 +112,7 @@ it('updates an existing task and reports saved changes', async () => {
 })
 
 it('does not report success and shows the error when saving fails', async () => {
+  const user = userEvent.setup()
   const create = vi.fn().mockRejectedValue(new Error('Server said no'))
   mockMutations({ mutateAsync: create, error: new Error('Server said no') }, {})
   const onSaved = vi.fn()
@@ -111,7 +120,7 @@ it('does not report success and shows the error when saving fails', async () => 
     <TodoEditor todo="new" busy={false} onClose={vi.fn()} onSaved={onSaved} />,
   )
   expect(screen.getByText('error: Server said no')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Submit form' }))
+  await user.click(screen.getByRole('button', { name: 'Submit form' }))
   await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
   expect(onSaved).not.toHaveBeenCalled()
 })
@@ -130,31 +139,34 @@ it('shows only the active mutation error', () => {
 })
 
 it('ignores submits while saving and marks the form busy', async () => {
+  const user = userEvent.setup()
   const create = vi.fn()
   mockMutations({ mutateAsync: create, isPending: true }, {})
   render(
     <TodoEditor todo="new" busy={false} onClose={vi.fn()} onSaved={vi.fn()} />,
   )
   expect(screen.getByText('busy: true')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Submit form' }))
+  await user.click(screen.getByRole('button', { name: 'Submit form' }))
   expect(create).not.toHaveBeenCalled()
 })
 
 it('treats the external busy flag as pending', async () => {
+  const user = userEvent.setup()
   const create = vi.fn()
   mockMutations({ mutateAsync: create }, {})
   render(<TodoEditor todo="new" busy onClose={vi.fn()} onSaved={vi.fn()} />)
   expect(screen.getByText('busy: true')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Submit form' }))
+  await user.click(screen.getByRole('button', { name: 'Submit form' }))
   expect(create).not.toHaveBeenCalled()
 })
 
 it('closes through the drawer close button', async () => {
+  const user = userEvent.setup()
   mockMutations({}, {})
   const onClose = vi.fn()
   render(
     <TodoEditor todo="new" busy={false} onClose={onClose} onSaved={vi.fn()} />,
   )
-  await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+  await user.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).toHaveBeenCalledTimes(1)
 })

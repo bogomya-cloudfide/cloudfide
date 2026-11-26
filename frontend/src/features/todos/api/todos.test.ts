@@ -28,12 +28,20 @@ it('sends only writable task fields on creation', async () => {
   })
 })
 
-it('patches a task sending only the provided writable fields', async () => {
+it('sends only writable task fields on update', async () => {
   vi.mocked(request).mockResolvedValue(todoFixture)
-  await todosApi.update(7, { completed: true })
+  await expect(
+    todosApi.update(7, { ...todoFixture, completed: true }),
+  ).resolves.toEqual(todoFixture)
   expect(request).toHaveBeenCalledWith('/todos/7', {
     method: 'PATCH',
-    body: JSON.stringify({ completed: true }),
+    body: JSON.stringify({
+      title: todoFixture.title,
+      description: '',
+      priority: 'medium',
+      due_date: null,
+      completed: true,
+    }),
   })
 })
 

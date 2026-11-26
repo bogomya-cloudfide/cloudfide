@@ -48,6 +48,11 @@ describe('selectTodos', () => {
     expect(selectTodos([a, b], 'all', '', 'due')).toEqual([b, a])
   })
 
+  it('breaks ties between undated tasks by newest id', () => {
+    const other: Todo = { ...base, id: 2 }
+    expect(selectTodos([base, other], 'all', '', 'due')).toEqual([other, base])
+  })
+
   it('sorts newest first and breaks ties by id', () => {
     const newer: Todo = { ...base, id: 2, created_at: '2026-10-02T12:00:00Z' }
     const tie: Todo = { ...base, id: 3 }
@@ -88,6 +93,9 @@ describe('validateTodo', () => {
     expect(validateTodo({ ...valid, title: 'a'.repeat(121) })).toEqual({
       title: 'The title must be at most 120 characters.',
     })
+    expect(validateTodo({ ...valid, description: 'a'.repeat(2000) })).toEqual(
+      {},
+    )
     expect(validateTodo({ ...valid, description: 'a'.repeat(2001) })).toEqual({
       description: 'The description must be at most 2000 characters.',
     })

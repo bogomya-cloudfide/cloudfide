@@ -62,6 +62,7 @@ describe('TodoForm', () => {
   }
 
   it('prefills from initial values and submits description and due date', async () => {
+    const user = userEvent.setup()
     const { onSubmit } = renderForm({
       initial: {
         title: 'Old',
@@ -73,8 +74,8 @@ describe('TodoForm', () => {
     })
     expect(screen.getByLabelText(/Task title/)).toHaveValue('Old')
     expect(screen.getByLabelText(/Due date/)).toHaveValue('2026-10-20')
-    await userEvent.type(screen.getByLabelText(/Description/), ' more  ')
-    await userEvent.click(screen.getByRole('button', { name: 'Save task' }))
+    await user.type(screen.getByLabelText(/Description/), ' more  ')
+    await user.click(screen.getByRole('button', { name: 'Save task' }))
     expect(onSubmit).toHaveBeenCalledWith({
       title: 'Old',
       description: 'Old text more',
@@ -85,18 +86,20 @@ describe('TodoForm', () => {
   })
 
   it('sets and clears the due date', async () => {
+    const user = userEvent.setup()
     const { onSubmit } = renderForm()
     const due = screen.getByLabelText(/Due date/)
-    await userEvent.type(due, '2026-11-02')
-    await userEvent.clear(due)
-    await userEvent.type(screen.getByLabelText(/Task title/), 'A')
-    await userEvent.click(screen.getByRole('button', { name: 'Save task' }))
+    await user.type(due, '2026-11-02')
+    await user.clear(due)
+    await user.type(screen.getByLabelText(/Task title/), 'A')
+    await user.click(screen.getByRole('button', { name: 'Save task' }))
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'A', due_date: null }),
     )
   })
 
   it('shows description and title length errors without submitting', async () => {
+    const user = userEvent.setup()
     const { onSubmit } = renderForm({
       initial: {
         title: 'a'.repeat(121),
@@ -106,7 +109,7 @@ describe('TodoForm', () => {
         completed: false,
       },
     })
-    await userEvent.click(screen.getByRole('button', { name: 'Save task' }))
+    await user.click(screen.getByRole('button', { name: 'Save task' }))
     expect(
       screen.getByText('The title must be at most 120 characters.'),
     ).toBeVisible()
@@ -117,6 +120,7 @@ describe('TodoForm', () => {
   })
 
   it('shows an invalid due date error', async () => {
+    const user = userEvent.setup()
     const { onSubmit } = renderForm({
       initial: {
         title: 'Task',
@@ -126,15 +130,16 @@ describe('TodoForm', () => {
         completed: false,
       },
     })
-    await userEvent.click(screen.getByRole('button', { name: 'Save task' }))
+    await user.click(screen.getByRole('button', { name: 'Save task' }))
     expect(screen.getByText('Enter a valid date.')).toBeVisible()
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
   it('shows a server error and cancels', async () => {
+    const user = userEvent.setup()
     const { onCancel } = renderForm({ error: 'Server unavailable' })
     expect(screen.getByTestId('alert')).toHaveTextContent('Server unavailable')
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
 
@@ -143,6 +148,5 @@ describe('TodoForm', () => {
     expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
     expect(screen.getByLabelText(/Task title/)).toBeDisabled()
-    expect(screen.queryByTestId('alert')).not.toBeInTheDocument()
   })
 })

@@ -6,6 +6,7 @@ import { TodoEmptyState } from './TodoEmptyState'
 vi.mock('../../../design-system', () => import('../../../design-system/mocks'))
 
 it('invites creating the first task and calls onCreate', async () => {
+  const user = userEvent.setup()
   const onCreate = vi.fn()
   render(
     <TodoEmptyState hasTodos={false} disabled={false} onCreate={onCreate} />,
@@ -16,9 +17,7 @@ it('invites creating the first task and calls onCreate', async () => {
   expect(
     screen.getByText('Write down what you need to do and get started.'),
   ).toBeInTheDocument()
-  await userEvent.click(
-    screen.getByRole('button', { name: 'Add your first task' }),
-  )
+  await user.click(screen.getByRole('button', { name: 'Add your first task' }))
   expect(onCreate).toHaveBeenCalledTimes(1)
 })
 

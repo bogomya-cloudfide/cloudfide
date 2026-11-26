@@ -68,18 +68,20 @@ function renderDialog(
 }
 
 it('deletes the task and reports success', async () => {
+  const user = userEvent.setup()
   const mutateAsync = vi.fn().mockResolvedValue(undefined)
   const { onDeleted } = renderDialog({ mutateAsync })
   expect(screen.queryByTestId('alert')).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Delete task' }))
+  await user.click(screen.getByRole('button', { name: 'Delete task' }))
   expect(mutateAsync).toHaveBeenCalledWith(todoFixture.id)
   expect(onDeleted).toHaveBeenCalledTimes(1)
 })
 
 it('does not report success when deletion fails', async () => {
+  const user = userEvent.setup()
   const mutateAsync = vi.fn().mockRejectedValue(new Error('fail'))
   const { onDeleted } = renderDialog({ mutateAsync })
-  await userEvent.click(screen.getByRole('button', { name: 'Delete task' }))
+  await user.click(screen.getByRole('button', { name: 'Delete task' }))
   expect(mutateAsync).toHaveBeenCalledTimes(1)
   expect(onDeleted).not.toHaveBeenCalled()
 })
@@ -90,9 +92,9 @@ it('disables actions and shows progress while deleting', () => {
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
 })
 
-it('does not delete while another operation is busy', () => {
-  const mutateAsync = vi.fn()
-  renderDialog({ mutateAsync }, true)
+it('disables actions while another operation is busy', () => {
+  renderDialog({ mutateAsync: vi.fn() }, true)
   expect(screen.getByRole('button', { name: 'Deleting…' })).toBeDisabled()
-  expect(mutateAsync).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled()
 })

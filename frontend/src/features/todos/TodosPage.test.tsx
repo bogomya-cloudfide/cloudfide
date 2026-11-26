@@ -38,19 +38,30 @@ vi.mock('./components/TodoFilters', () => ({ TodoFilters: () => null }))
 vi.mock('./components/TodoList', () => ({
   TodoList: ({
     todos,
+    hasTodos,
+    loading,
+    failed,
+    busy,
     onToggle,
     onEdit,
     onDelete,
     onCreate,
   }: {
-    onCreate: () => void
     todos: Todo[]
+    hasTodos: boolean
+    loading: boolean
+    failed: boolean
+    busy: boolean
+    onCreate: () => void
     onToggle: (todo: Todo) => void
     onEdit: (todo: Todo) => void
     onDelete: (todo: Todo) => void
   }) => (
     <div>
       <p>Task list</p>
+      <p data-testid="list-state">
+        {`hasTodos=${hasTodos} loading=${loading} failed=${failed} busy=${busy}`}
+      </p>
       <button onClick={onCreate}>Create from list</button>
       <button onClick={() => onToggle(todos[0])}>Toggle first</button>
       <button onClick={() => onEdit(todos[0])}>Edit first</button>
@@ -144,12 +155,14 @@ function setup({
   mutationError = null as Error | null,
   message = '',
   visible = [todoFixture],
+  query = {},
 }: {
   busy?: boolean
   mutateAsync?: ReturnType<typeof vi.fn>
   mutationError?: Error | null
   message?: string
   visible?: Todo[]
+  query?: Partial<ReturnType<typeof useTodosQuery>>
 } = {}) {
   const notify = vi.fn()
   vi.mocked(useTodosQuery).mockReturnValue({
@@ -159,6 +172,7 @@ function setup({
     isError: false,
     error: null,
     refetch: vi.fn(),
+    ...query,
   } as unknown as ReturnType<typeof useTodosQuery>)
   vi.mocked(useUpdateTodoMutation).mockReturnValue({
     error: mutationError,
@@ -183,11 +197,12 @@ function setup({
 beforeEach(() => vi.clearAllMocks())
 
 it('toggles a task and congratulates when it becomes completed', async () => {
+  const user = userEvent.setup()
   const mutateAsync = vi
     .fn()
     .mockResolvedValue({ ...todoFixture, completed: true })
   const { notify } = setup({ mutateAsync })
-  await userEvent.click(screen.getByRole('button', { name: 'Toggle first' }))
+  await user.click(screen.getByRole('button', { name: 'Toggle first' }))
   expect(mutateAsync).toHaveBeenCalledWith({
     id: todoFixture.id,
     input: { completed: true },
@@ -196,10 +211,11 @@ it('toggles a task and congratulates when it becomes completed', async () => {
 })
 
 it('announces when a task is marked active again', async () => {
+  const user = userEvent.setup()
   const done = { ...todoFixture, completed: true }
   const mutateAsync = vi.fn().mockResolvedValue({ ...done, completed: false })
   const { notify } = setup({ mutateAsync, visible: [done] })
-  await userEvent.click(screen.getByRole('button', { name: 'Toggle first' }))
+  await user.click(screen.getByRole('button', { name: 'Toggle first' }))
   expect(mutateAsync).toHaveBeenCalledWith({
     id: done.id,
     input: { completed: false },
@@ -208,34 +224,82 @@ it('announces when a task is marked active again', async () => {
 })
 
 it('ignores toggles while busy', async () => {
+  const user = userEvent.setup()
   const { mutateAsync, notify } = setup({ busy: true })
-  await userEvent.click(screen.getByRole('button', { name: 'Toggle first' }))
+  await user.click(screen.getByRole('button', { name: 'Toggle first' }))
   expect(mutateAsync).not.toHaveBeenCalled()
   expect(notify).not.toHaveBeenCalled()
 })
 
-it('stays quiet when toggling fails and shows the mutation error', async () => {
+it('stays quiet when toggling fails', async () => {
+  const user = userEvent.setup()
   const mutateAsync = vi.fn().mockRejectedValue(new Error('nope'))
-  const { notify } = setup({ mutateAsync, mutationError: new Error('nope') })
-  await userEvent.click(screen.getByRole('button', { name: 'Toggle first' }))
+  const { notify } = setup({ mutateAsync })
+  await user.click(screen.getByRole('button', { name: 'Toggle first' }))
   expect(mutateAsync).toHaveBeenCalledTimes(1)
   expect(notify).not.toHaveBeenCalled()
-  expect(screen.getByTestId('alert')).toHaveTextContent('nope')
+})
+
+it('shows the toggle error in preference to the query error', () => {
+  setup({
+    mutationError: new Error('Could not update the task.'),
+    query: { isError: true, error: new Error('Could not load tasks.') },
+  })
+  expect(screen.getByTestId('alert')).toHaveTextContent(
+    'Could not update the task.',
+  )
+  expect(screen.getByTestId('alert')).not.toHaveTextContent(
+    'Could not load tasks.',
+  )
+})
+
+it('blocks creation and shows the list as loading during the first load', () => {
+  setup({
+    visible: [],
+    query: { data: undefined, isPending: true, isFetching: true },
+  })
+  expect(screen.getByRole('button', { name: 'New task' })).toBeDisabled()
+  expect(screen.getByTestId('list-state')).toHaveTextContent(
+    'hasTodos=false loading=true failed=false busy=false',
+  )
+})
+
+it('disables retrying while a failed first load is being refetched', () => {
+  setup({
+    visible: [],
+    query: {
+      data: undefined,
+      isError: true,
+      isFetching: true,
+      error: new Error('The server is unavailable.'),
+    },
+  })
+  expect(screen.getByRole('button', { name: 'Try again' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'New task' })).toBeEnabled()
+  expect(screen.getByTestId('list-state')).toHaveTextContent(
+    'hasTodos=false loading=false failed=true busy=false',
+  )
+})
+
+it('tells the list that tasks exist when filters hide all of them', () => {
+  setup({ visible: [] })
+  expect(screen.getByTestId('list-state')).toHaveTextContent('hasTodos=true')
 })
 
 it('opens and closes the editor for a new task and notifies on save', async () => {
+  const user = userEvent.setup()
   const { notify } = setup()
   expect(
     screen.queryByRole('dialog', { name: 'Editor' }),
   ).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'New task' }))
+  await user.click(screen.getByRole('button', { name: 'New task' }))
   expect(screen.getByText('editing new')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Close editor' }))
+  await user.click(screen.getByRole('button', { name: 'Close editor' }))
   expect(
     screen.queryByRole('dialog', { name: 'Editor' }),
   ).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'New task' }))
-  await userEvent.click(screen.getByRole('button', { name: 'Save editor' }))
+  await user.click(screen.getByRole('button', { name: 'New task' }))
+  await user.click(screen.getByRole('button', { name: 'Save editor' }))
   expect(notify).toHaveBeenCalledWith('Task created.')
   expect(
     screen.queryByRole('dialog', { name: 'Editor' }),
@@ -243,29 +307,30 @@ it('opens and closes the editor for a new task and notifies on save', async () =
 })
 
 it('opens the new-task editor from the list empty state', async () => {
+  const user = userEvent.setup()
   setup()
-  await userEvent.click(
-    screen.getByRole('button', { name: 'Create from list' }),
-  )
+  await user.click(screen.getByRole('button', { name: 'Create from list' }))
   expect(screen.getByText('editing new')).toBeInTheDocument()
 })
 
 it('edits an existing task', async () => {
+  const user = userEvent.setup()
   setup()
-  await userEvent.click(screen.getByRole('button', { name: 'Edit first' }))
+  await user.click(screen.getByRole('button', { name: 'Edit first' }))
   expect(screen.getByText(`editing ${todoFixture.title}`)).toBeInTheDocument()
 })
 
 it('confirms deletion, closes the dialog and notifies', async () => {
+  const user = userEvent.setup()
   const { notify } = setup()
-  await userEvent.click(screen.getByRole('button', { name: 'Delete first' }))
+  await user.click(screen.getByRole('button', { name: 'Delete first' }))
   expect(screen.getByText(`deleting ${todoFixture.title}`)).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Close delete' }))
+  await user.click(screen.getByRole('button', { name: 'Close delete' }))
   expect(
     screen.queryByRole('dialog', { name: 'Delete' }),
   ).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Delete first' }))
-  await userEvent.click(screen.getByRole('button', { name: 'Confirm delete' }))
+  await user.click(screen.getByRole('button', { name: 'Delete first' }))
+  await user.click(screen.getByRole('button', { name: 'Confirm delete' }))
   expect(notify).toHaveBeenCalledWith('Task deleted.')
   expect(
     screen.queryByRole('dialog', { name: 'Delete' }),
@@ -275,5 +340,6 @@ it('confirms deletion, closes the dialog and notifies', async () => {
 it('disables creation while busy and shows the current notice', () => {
   setup({ busy: true, message: 'Saved' })
   expect(screen.getByRole('button', { name: 'New task' })).toBeDisabled()
+  expect(screen.getByTestId('list-state')).toHaveTextContent('busy=true')
   expect(screen.getByTestId('notice')).toHaveTextContent('Saved')
 })

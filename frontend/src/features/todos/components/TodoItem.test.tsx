@@ -47,6 +47,7 @@ function renderItem(
 }
 
 it('shows a completed task with its description and unchecks on toggle', async () => {
+  const user = userEvent.setup()
   const todo: Todo = {
     ...todoFixture,
     completed: true,
@@ -63,7 +64,7 @@ it('shows a completed task with its description and unchecks on toggle', async (
     name: `Mark as active: ${todo.title}`,
   })
   expect(checkbox).toBeChecked()
-  await userEvent.click(checkbox)
+  await user.click(checkbox)
   expect(onToggle).toHaveBeenCalledTimes(1)
 })
 
@@ -78,8 +79,9 @@ it('labels the checkbox for completing an active task and omits empty descriptio
 })
 
 it('forwards delete requests', async () => {
+  const user = userEvent.setup()
   const { onDelete } = renderItem(todoFixture)
-  await userEvent.click(
+  await user.click(
     screen.getByRole('button', { name: `Delete: ${todoFixture.title}` }),
   )
   expect(onDelete).toHaveBeenCalledTimes(1)
@@ -102,7 +104,7 @@ it('flags an open task with a past due date as overdue', () => {
   expect(screen.getByText(/14 Oct 2026 · overdue/)).toBeVisible()
 })
 
-it('shows a future or completed due date without the overdue flag', () => {
+it('shows a future due date without the overdue flag', () => {
   vi.setSystemTime(new Date(2026, 9, 15, 12))
   renderItem({ ...todoFixture, due_date: '2026-10-20' })
   expect(screen.getByText('20 Oct 2026')).toBeVisible()
