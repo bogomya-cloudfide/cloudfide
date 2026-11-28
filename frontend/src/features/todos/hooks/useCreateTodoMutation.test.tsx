@@ -47,6 +47,28 @@ it('creates the list from an empty cache and avoids duplicates by id', async () 
   expect(client.getQueryData(todoKeys.list)).toEqual([todoFixture])
 })
 
+it('is not overwritten by a slower list fetch started before the save', async () => {
+  const saved = { ...todoFixture, id: 9, title: 'New' }
+  vi.mocked(todosApi.create).mockResolvedValue(saved)
+  const { client, result } = setup()
+  client.setQueryData(todoKeys.list, [todoFixture])
+  let resolveStale: (value: (typeof todoFixture)[]) => void = () => undefined
+  const stale = client
+    .fetchQuery({
+      queryKey: todoKeys.list,
+      queryFn: () =>
+        new Promise<(typeof todoFixture)[]>((resolve) => {
+          resolveStale = resolve
+        }),
+      staleTime: 0,
+    })
+    .catch(() => undefined)
+  await act(() => result.current.mutateAsync(input))
+  resolveStale([todoFixture])
+  await stale
+  expect(client.getQueryData(todoKeys.list)).toEqual([saved, todoFixture])
+})
+
 it('leaves the cache unchanged when creation fails', async () => {
   vi.mocked(todosApi.create).mockRejectedValue(new Error('boom'))
   const { client, result } = setup()

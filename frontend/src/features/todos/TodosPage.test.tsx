@@ -34,7 +34,30 @@ vi.mock('./components/TodosHeader', () => ({
     </>
   ),
 }))
-vi.mock('./components/TodoFilters', () => ({ TodoFilters: () => null }))
+vi.mock('./components/TodoFilters', () => ({
+  TodoFilters: ({
+    filter,
+    search,
+    sort,
+    onFilterChange,
+    onSearchChange,
+    onSortChange,
+  }: {
+    filter: string
+    search: string
+    sort: string
+    onFilterChange: (value: string) => void
+    onSearchChange: (value: string) => void
+    onSortChange: (value: string) => void
+  }) => (
+    <div>
+      <p data-testid="filters-state">{`${filter}|${search}|${sort}`}</p>
+      <button onClick={() => onFilterChange('active')}>Set filter</button>
+      <button onClick={() => onSearchChange('milk')}>Set search</button>
+      <button onClick={() => onSortChange('oldest')}>Set sort</button>
+    </div>
+  ),
+}))
 vi.mock('./components/TodoList', () => ({
   TodoList: ({
     todos,
@@ -72,15 +95,18 @@ vi.mock('./components/TodoList', () => ({
 vi.mock('./components/TodoEditor', () => ({
   TodoEditor: ({
     todo,
+    busy,
     onClose,
     onSaved,
   }: {
     todo: Todo | 'new'
+    busy: boolean
     onClose: () => void
     onSaved: (notice: string) => void
   }) => (
     <div role="dialog" aria-label="Editor">
       <p>{todo === 'new' ? 'editing new' : `editing ${todo.title}`}</p>
+      <p data-testid="editor-busy">{`busy=${busy}`}</p>
       <button onClick={onClose}>Close editor</button>
       <button onClick={() => onSaved('Task created.')}>Save editor</button>
     </div>
@@ -89,15 +115,18 @@ vi.mock('./components/TodoEditor', () => ({
 vi.mock('./components/DeleteTodoDialog', () => ({
   DeleteTodoDialog: ({
     todo,
+    busy,
     onClose,
     onDeleted,
   }: {
     todo: Todo
+    busy: boolean
     onClose: () => void
     onDeleted: () => void
   }) => (
     <div role="dialog" aria-label="Delete">
       <p>deleting {todo.title}</p>
+      <p data-testid="delete-busy">{`busy=${busy}`}</p>
       <button onClick={onClose}>Close delete</button>
       <button onClick={onDeleted}>Confirm delete</button>
     </div>
@@ -335,6 +364,34 @@ it('confirms deletion, closes the dialog and notifies', async () => {
   expect(
     screen.queryByRole('dialog', { name: 'Delete' }),
   ).not.toBeInTheDocument()
+})
+
+it('feeds the loaded tasks to the filters and wires filter state and setters', async () => {
+  const user = userEvent.setup()
+  setup()
+  const filters = vi.mocked(useTodoFilters).mock.results[0].value
+  expect(useTodoFilters).toHaveBeenCalledWith([todoFixture])
+  expect(screen.getByTestId('filters-state')).toHaveTextContent('all||newest')
+  await user.click(screen.getByRole('button', { name: 'Set filter' }))
+  expect(filters.setFilter).toHaveBeenCalledWith('active')
+  await user.click(screen.getByRole('button', { name: 'Set search' }))
+  expect(filters.setSearch).toHaveBeenCalledWith('milk')
+  await user.click(screen.getByRole('button', { name: 'Set sort' }))
+  expect(filters.setSort).toHaveBeenCalledWith('oldest')
+})
+
+it('filters an empty list before the tasks load', () => {
+  setup({ visible: [], query: { data: undefined, isPending: true } })
+  expect(useTodoFilters).toHaveBeenCalledWith([])
+})
+
+it('passes the busy flag to the editor and the delete dialog', async () => {
+  const user = userEvent.setup()
+  setup({ busy: true })
+  await user.click(screen.getByRole('button', { name: 'Edit first' }))
+  expect(screen.getByTestId('editor-busy')).toHaveTextContent('busy=true')
+  await user.click(screen.getByRole('button', { name: 'Delete first' }))
+  expect(screen.getByTestId('delete-busy')).toHaveTextContent('busy=true')
 })
 
 it('disables creation while busy and shows the current notice', () => {

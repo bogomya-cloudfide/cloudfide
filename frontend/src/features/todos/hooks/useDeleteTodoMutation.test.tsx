@@ -37,6 +37,28 @@ it('does not create a list when nothing is cached', async () => {
   expect(client.getQueryData(todoKeys.list)).toBeUndefined()
 })
 
+it('is not overwritten by a slower list fetch started before the delete', async () => {
+  vi.mocked(todosApi.remove).mockResolvedValue(undefined)
+  const other = { ...todoFixture, id: 8 }
+  const { client, result } = setup()
+  client.setQueryData(todoKeys.list, [todoFixture, other])
+  let resolveStale: (value: (typeof todoFixture)[]) => void = () => undefined
+  const stale = client
+    .fetchQuery({
+      queryKey: todoKeys.list,
+      queryFn: () =>
+        new Promise<(typeof todoFixture)[]>((resolve) => {
+          resolveStale = resolve
+        }),
+      staleTime: 0,
+    })
+    .catch(() => undefined)
+  await act(() => result.current.mutateAsync(todoFixture.id))
+  resolveStale([todoFixture, other])
+  await stale
+  expect(client.getQueryData(todoKeys.list)).toEqual([other])
+})
+
 it('keeps the cached list when deletion fails', async () => {
   vi.mocked(todosApi.remove).mockRejectedValue(new Error('boom'))
   const { client, result } = setup()

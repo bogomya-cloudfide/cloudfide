@@ -45,6 +45,33 @@ it('does not create a list when nothing is cached', async () => {
   expect(client.getQueryData(todoKeys.list)).toBeUndefined()
 })
 
+it('is not overwritten by a slower list fetch started before the save', async () => {
+  const saved = { ...todoFixture, completed: true }
+  vi.mocked(todosApi.update).mockResolvedValue(saved)
+  const { client, result } = setup()
+  client.setQueryData(todoKeys.list, [todoFixture])
+  let resolveStale: (value: (typeof todoFixture)[]) => void = () => undefined
+  const stale = client
+    .fetchQuery({
+      queryKey: todoKeys.list,
+      queryFn: () =>
+        new Promise<(typeof todoFixture)[]>((resolve) => {
+          resolveStale = resolve
+        }),
+      staleTime: 0,
+    })
+    .catch(() => undefined)
+  await act(() =>
+    result.current.mutateAsync({
+      id: todoFixture.id,
+      input: { completed: true },
+    }),
+  )
+  resolveStale([todoFixture])
+  await stale
+  expect(client.getQueryData(todoKeys.list)).toEqual([saved])
+})
+
 it('keeps the cached list when the update fails', async () => {
   vi.mocked(todosApi.update).mockRejectedValue(new Error('boom'))
   const { client, result } = setup()
