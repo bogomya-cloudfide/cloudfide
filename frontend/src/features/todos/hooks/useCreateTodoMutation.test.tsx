@@ -66,6 +66,19 @@ it('is not overwritten by a slower list fetch started before the save', async ()
   expect(client.getQueryData(todoKeys.list)).toEqual([saved, todoFixture])
 })
 
+it('invalidates the stats after creating', async () => {
+  vi.mocked(todosApi.create).mockResolvedValue(todoFixture)
+  const { client, result } = setup()
+  client.setQueryData(todoKeys.stats, {
+    total: 0,
+    active: 0,
+    completed: 0,
+    overdue: 0,
+  })
+  await act(() => result.current.mutateAsync(input))
+  expect(client.getQueryState(todoKeys.stats)?.isInvalidated).toBe(true)
+})
+
 it('leaves the cache unchanged when creation fails', async () => {
   vi.mocked(todosApi.create).mockRejectedValue(new Error('boom'))
   const { client, result } = setup()
