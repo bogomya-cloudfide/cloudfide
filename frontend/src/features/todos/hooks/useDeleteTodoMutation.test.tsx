@@ -42,17 +42,14 @@ it('is not overwritten by a slower list fetch started before the delete', async 
   const other = { ...todoFixture, id: 8 }
   const { client, result } = setup()
   client.setQueryData(todoKeys.list, [todoFixture, other])
-  let resolveStale: (value: (typeof todoFixture)[]) => void = () => undefined
-  const stale = client
-    .fetchQuery({
-      queryKey: todoKeys.list,
-      queryFn: () =>
-        new Promise<(typeof todoFixture)[]>((resolve) => {
-          resolveStale = resolve
-        }),
-      staleTime: 0,
-    })
-    .catch(() => undefined)
+  let resolveStale!: (todos: (typeof todoFixture)[]) => void
+  const stale = client.fetchQuery({
+    queryKey: todoKeys.list,
+    queryFn: () =>
+      new Promise<(typeof todoFixture)[]>((resolve) => {
+        resolveStale = resolve
+      }),
+  })
   await act(() => result.current.mutateAsync(todoFixture.id))
   resolveStale([todoFixture, other])
   await stale

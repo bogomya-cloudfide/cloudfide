@@ -50,17 +50,14 @@ it('is not overwritten by a slower list fetch started before the save', async ()
   vi.mocked(todosApi.update).mockResolvedValue(saved)
   const { client, result } = setup()
   client.setQueryData(todoKeys.list, [todoFixture])
-  let resolveStale: (value: (typeof todoFixture)[]) => void = () => undefined
-  const stale = client
-    .fetchQuery({
-      queryKey: todoKeys.list,
-      queryFn: () =>
-        new Promise<(typeof todoFixture)[]>((resolve) => {
-          resolveStale = resolve
-        }),
-      staleTime: 0,
-    })
-    .catch(() => undefined)
+  let resolveStale!: (todos: (typeof todoFixture)[]) => void
+  const stale = client.fetchQuery({
+    queryKey: todoKeys.list,
+    queryFn: () =>
+      new Promise<(typeof todoFixture)[]>((resolve) => {
+        resolveStale = resolve
+      }),
+  })
   await act(() =>
     result.current.mutateAsync({
       id: todoFixture.id,

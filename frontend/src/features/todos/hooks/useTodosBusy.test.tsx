@@ -4,12 +4,13 @@ import type { ReactNode } from 'react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { todoFixture } from '../../../test/todoFixture'
 import { todosApi } from '../api/todos'
+import { useCreateTodoMutation } from './useCreateTodoMutation'
 import { useDeleteTodoMutation } from './useDeleteTodoMutation'
 import { useTodosBusy } from './useTodosBusy'
 import { useUpdateTodoMutation } from './useUpdateTodoMutation'
 
 vi.mock('../api/todos', () => ({
-  todosApi: { remove: vi.fn(), update: vi.fn() },
+  todosApi: { create: vi.fn(), remove: vi.fn(), update: vi.fn() },
 }))
 beforeEach(() => vi.clearAllMocks())
 
@@ -23,6 +24,7 @@ function setup() {
   return renderHook(
     () => ({
       busy: useTodosBusy(),
+      create: useCreateTodoMutation(),
       remove: useDeleteTodoMutation(),
       update: useUpdateTodoMutation(),
     }),
@@ -61,6 +63,28 @@ it('is busy while an update is pending', async () => {
   const { result } = setup()
   act(() => {
     result.current.update.mutate({ id: todoFixture.id, input: {} })
+  })
+  await waitFor(() => expect(result.current.busy).toBe(true))
+  await act(async () => resolve(todoFixture))
+  await waitFor(() => expect(result.current.busy).toBe(false))
+})
+
+it('is busy while a create is pending', async () => {
+  let resolve!: (todo: typeof todoFixture) => void
+  vi.mocked(todosApi.create).mockReturnValue(
+    new Promise((r) => {
+      resolve = r
+    }),
+  )
+  const { result } = setup()
+  act(() => {
+    result.current.create.mutate({
+      title: todoFixture.title,
+      description: '',
+      priority: 'medium',
+      due_date: null,
+      completed: false,
+    })
   })
   await waitFor(() => expect(result.current.busy).toBe(true))
   await act(async () => resolve(todoFixture))

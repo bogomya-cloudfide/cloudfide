@@ -4,13 +4,11 @@ import { request } from './http'
 afterEach(() => vi.unstubAllGlobals())
 
 function stubFetch(body: unknown, status = 200) {
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(body === undefined ? null : JSON.stringify(body), {
-        status,
-      }),
-    )
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(body === undefined ? null : JSON.stringify(body), {
+      status,
+    }),
+  )
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
 }

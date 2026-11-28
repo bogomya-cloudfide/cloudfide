@@ -54,7 +54,7 @@ vi.mock('./components/TodoFilters', () => ({
       <p data-testid="filters-state">{`${filter}|${search}|${sort}`}</p>
       <button onClick={() => onFilterChange('active')}>Set filter</button>
       <button onClick={() => onSearchChange('milk')}>Set search</button>
-      <button onClick={() => onSortChange('oldest')}>Set sort</button>
+      <button onClick={() => onSortChange('due')}>Set sort</button>
     </div>
   ),
 }))
@@ -185,6 +185,7 @@ function setup({
   message = '',
   visible = [todoFixture],
   query = {},
+  filters = {},
 }: {
   busy?: boolean
   mutateAsync?: ReturnType<typeof vi.fn>
@@ -192,6 +193,7 @@ function setup({
   message?: string
   visible?: Todo[]
   query?: Partial<ReturnType<typeof useTodosQuery>>
+  filters?: Partial<ReturnType<typeof useTodoFilters>>
 } = {}) {
   const notify = vi.fn()
   vi.mocked(useTodosQuery).mockReturnValue({
@@ -218,6 +220,7 @@ function setup({
     setFilter: vi.fn(),
     setSearch: vi.fn(),
     setSort: vi.fn(),
+    ...filters,
   })
   render(<TodosPage />)
   return { notify, mutateAsync }
@@ -291,6 +294,7 @@ it('blocks creation and shows the list as loading during the first load', () => 
   expect(screen.getByTestId('list-state')).toHaveTextContent(
     'hasTodos=false loading=true failed=false busy=false',
   )
+  expect(useTodoFilters).toHaveBeenCalledWith([])
 })
 
 it('disables retrying while a failed first load is being refetched', () => {
@@ -347,6 +351,7 @@ it('edits an existing task', async () => {
   setup()
   await user.click(screen.getByRole('button', { name: 'Edit first' }))
   expect(screen.getByText(`editing ${todoFixture.title}`)).toBeInTheDocument()
+  expect(screen.getByTestId('editor-busy')).toHaveTextContent('busy=false')
 })
 
 it('confirms deletion, closes the dialog and notifies', async () => {
@@ -354,6 +359,7 @@ it('confirms deletion, closes the dialog and notifies', async () => {
   const { notify } = setup()
   await user.click(screen.getByRole('button', { name: 'Delete first' }))
   expect(screen.getByText(`deleting ${todoFixture.title}`)).toBeInTheDocument()
+  expect(screen.getByTestId('delete-busy')).toHaveTextContent('busy=false')
   await user.click(screen.getByRole('button', { name: 'Close delete' }))
   expect(
     screen.queryByRole('dialog', { name: 'Delete' }),
@@ -368,21 +374,18 @@ it('confirms deletion, closes the dialog and notifies', async () => {
 
 it('feeds the loaded tasks to the filters and wires filter state and setters', async () => {
   const user = userEvent.setup()
-  setup()
+  setup({ filters: { filter: 'completed', search: 'demo', sort: 'due' } })
   const filters = vi.mocked(useTodoFilters).mock.results[0].value
   expect(useTodoFilters).toHaveBeenCalledWith([todoFixture])
-  expect(screen.getByTestId('filters-state')).toHaveTextContent('all||newest')
+  expect(screen.getByTestId('filters-state')).toHaveTextContent(
+    'completed|demo|due',
+  )
   await user.click(screen.getByRole('button', { name: 'Set filter' }))
   expect(filters.setFilter).toHaveBeenCalledWith('active')
   await user.click(screen.getByRole('button', { name: 'Set search' }))
   expect(filters.setSearch).toHaveBeenCalledWith('milk')
   await user.click(screen.getByRole('button', { name: 'Set sort' }))
-  expect(filters.setSort).toHaveBeenCalledWith('oldest')
-})
-
-it('filters an empty list before the tasks load', () => {
-  setup({ visible: [], query: { data: undefined, isPending: true } })
-  expect(useTodoFilters).toHaveBeenCalledWith([])
+  expect(filters.setSort).toHaveBeenCalledWith('due')
 })
 
 it('passes the busy flag to the editor and the delete dialog', async () => {
