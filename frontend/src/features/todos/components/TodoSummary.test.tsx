@@ -26,13 +26,15 @@ it('shows every count and highlights overdue tasks', () => {
   expect(overdue?.[0].variant).toBe('warning')
 })
 
-it('keeps the overdue badge neutral when nothing is overdue', () => {
+it('hides the overdue badge when nothing is overdue', () => {
   render(
     <TodoSummary stats={{ total: 1, active: 1, completed: 0, overdue: 0 }} />,
   )
-  expect(screen.getByLabelText('Task summary')).toHaveTextContent('Overdue: 0')
+  const summary = screen.getByLabelText('Task summary')
+  expect(summary).toHaveTextContent('Total: 1')
+  expect(summary).not.toHaveTextContent('Overdue')
   const overdue = vi
     .mocked(Badge)
     .mock.calls.find(([props]) => String(props.children).includes('Overdue'))
-  expect(overdue?.[0].variant).toBe('neutral')
+  expect(overdue).toBeUndefined()
 })
