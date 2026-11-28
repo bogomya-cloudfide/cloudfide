@@ -1,5 +1,7 @@
 # Taskly App Node
 
+A custom agent adds and maintains unit tests in this repository, locally and on pull requests that change backend or frontend source: see [SOLUTION.md](SOLUTION.md).
+
 ## Setup
 
 ```sh
