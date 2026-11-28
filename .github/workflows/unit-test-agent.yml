@@ -1,0 +1,442 @@
+name: unit-test-agent
+
+# generate: the agent writes tests via the Claude Code CLI (read-only token, used by checkout only; the only job with the API key)
+# verify:   runs typecheck + tests on a clean runner, with the patch applied if there is one (no secrets)
+# publish:  re-checks the patch, pushes it if verified, reports in the PR (no LLM, no npm)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'backend/src/**'
+      - 'frontend/src/**'
+      - '!**/*.test.ts'
+      - '!**/*.test.tsx'
+      - '!frontend/src/test/**'
+      - '!**/*.stories.tsx'
+      - '!frontend/src/design-system/**'
+
+permissions: {}
+
+env:
+  CLAUDE_CLI_VERSION: 2.1.332
+
+concurrency:
+  group: unit-test-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  generate:
+    name: Generate tests
+    # Same-repo, non-draft PRs opened by people with access to the repo; never this workflow's own push,
+    # and never a PR whose head is the default branch, where the test commit would land unreviewed.
+    if: >-
+      ${{ !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.head.ref != github.event.repository.default_branch
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+      && github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: '*/package-lock.json'
+
+      # The agent's sandbox (settings.json, and CLAUDE_CODE_SUBPROCESS_ENV_SCRUB on the agent step) needs
+      # bubblewrap and socat; without them the CLI refuses to start.
+      - name: Install sandbox dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap socat
+          # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # The runner holds this job's secrets in memory, and root can read them. So nothing that runs later
+      # in this job, inside the sandbox or outside it (post steps, anything the agent's tests could
+      # alter), may become root or attach to another process. Install scripts of dependencies are not
+      # contained by this: they run before the agent and are trusted as part of the PR.
+      - name: Drop root access for the rest of the job
+        run: |
+          set -euo pipefail
+          sudo sysctl -w kernel.yama.ptrace_scope=3
+          sudo passwd -l runner
+          sudo systemctl stop docker.socket docker.service || true
+          sudo sh -c 'chmod -f 600 /var/run/docker.sock || true; rm -f /etc/sudoers.d/*'
+          if sudo -n true 2> /dev/null; then echo "::error::sudo still works"; exit 1; fi
+          if [ -w /var/run/docker.sock ]; then echo "::error::the Docker socket is still writable"; exit 1; fi
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix backend
+          npm ci --prefix frontend
+
+      - name: Install Claude Code CLI
+        run: |
+          set -euo pipefail
+          npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CLI_VERSION"
+          # Documented fallback for when npm skips the postinstall that puts the native binary in place.
+          claude --version > /dev/null 2>&1 || node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"
+          claude --version
+
+      - name: Use agent definition from the base branch
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # The PR must not steer its own reviewer: agent config comes from the base branch tip.
+          # CLAUDE.md and .claude/rules files, which may sit in any directory, are switched off in the --settings policy.
+          base="refs/remotes/origin/$BASE_REF"
+          if ! git rev-parse --verify --quiet "$base^{commit}" > /dev/null; then
+            echo "::error::Base branch $BASE_REF is not in the checkout (expected $base)"
+            exit 1
+          fi
+          paths=(.claude .mcp.json)
+          rm -rf -- "${paths[@]}"
+          for path in "${paths[@]}"; do
+            if git cat-file -e "$base:$path" 2> /dev/null; then git checkout "$base" -- "$path"; fi
+          done
+          if [ ! -f .claude/agents/unit-test-writer.md ]; then
+            echo "::error::.claude/agents/unit-test-writer.md is missing on $BASE_REF"
+            exit 1
+          fi
+
+      - name: Run unit test agent
+        id: agent
+        timeout-minutes: 30
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Keeps the API key out of the commands the agent runs. It also makes the CLI report permission
+          # mode "default"; headless, that still denies everything the --settings allowlist does not allow.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
+          DISABLE_AUTOUPDATER: '1'
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # The isolation write-protects root package manifests and leaves empty placeholders where none
+          # exist; an empty package.json breaks Vitest's config loading. Outside the patch paths.
+          [ -e package.json ] || [ -L package.json ] || echo '{ "private": true }' > package.json
+          printf -v PROMPT 'MODE: pr\nBASE_SHA: %s\nHEAD_SHA: %s' "$BASE_SHA" "$HEAD_SHA"
+          # Same command as a local run; no GitHub token reaches this step.
+          claude -p "$PROMPT" --agent unit-test-writer --permission-mode dontAsk \
+            --settings .claude/unit-test-agent/settings.json --json-schema "$(cat .claude/unit-test-agent/report.schema.json)" \
+            --output-format stream-json --verbose --max-turns 80 --max-budget-usd 5 \
+            < /dev/null > "$RUNNER_TEMP/agent-run.jsonl"
+
+      # The workspace is untrusted from here on: the agent's tests could write anywhere in it. This job
+      # therefore runs nothing from it after the agent (the agent formats its own files inside the
+      # sandbox); verify and publish treat the artifact as untrusted.
+      - name: Build patch
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/agent-output"
+          # From the index, so new files are included; against HEAD_SHA, so the patch is the whole change.
+          git add -A -- backend frontend
+          git diff --cached --no-renames --no-ext-diff --no-textconv "$HEAD_SHA" -- backend frontend \
+            > "$RUNNER_TEMP/agent-output/tests.patch"
+          git diff --cached --stat "$HEAD_SHA" -- backend frontend
+
+      - name: Write report and run metadata
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/agent-output"
+          log="$RUNNER_TEMP/agent-run.jsonl"
+          mkdir -p "$out"
+          # Best effort. Only these fields leave the job; the run log itself is never uploaded.
+          # `fromjson? | objects` skips a line cut off by the step timeout instead of losing the whole log.
+          jq -nR '[inputs | fromjson? | objects] | map(select(.type == "result")) | last | .structured_output // empty' \
+            "$log" > "$out/report.json" 2> /dev/null || : > "$out/report.json"
+          jq -nR '[inputs | fromjson? | objects] | (map(select(.type == "result")) | last) as $result | {
+                model: (map(select(.type == "system" and .subtype == "init")) | first | .model),
+                turns: $result.num_turns, cost_usd: $result.total_cost_usd, result: $result.subtype,
+                error: (if $result.is_error then ($result.result // ($result.errors // [] | map(tostring) | join("; "))) else null end),
+                skills_used: ([.[] | select(.type == "assistant") | .message.content[]?
+                  | select(.type == "tool_use" and .name == "Skill") | .input.skill | strings] | unique)
+              }' "$log" > "$out/meta.json" 2> /dev/null || echo '{}' > "$out/meta.json"
+
+      - name: Upload agent output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-output
+          path: ${{ runner.temp }}/agent-output/
+
+  verify:
+    name: Verify tests
+    needs: generate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: '*/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix backend
+          npm ci --prefix frontend
+
+      - name: Download agent output
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-output
+          path: ${{ runner.temp }}/agent-output
+
+      - name: Check patch
+        id: guard
+        continue-on-error: true
+        run: node .github/scripts/check-patch.mjs "$RUNNER_TEMP/agent-output/tests.patch"
+
+      # Tells "the PR was already red" from "the patch broke it". With an empty patch the checks below
+      # are that same run, so this step is skipped.
+      - name: Typecheck and tests without the patch
+        id: baseline
+        if: steps.guard.outputs.ok == 'true' && steps.guard.outputs.empty == 'false'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          for pkg in backend frontend; do
+            npm --prefix "$pkg" run typecheck
+            npm --prefix "$pkg" test
+          done
+
+      - name: Apply patch
+        id: apply
+        if: steps.guard.outputs.ok == 'true' && steps.guard.outputs.empty == 'false'
+        continue-on-error: true
+        run: git apply --index "$RUNNER_TEMP/agent-output/tests.patch"
+
+      # Typecheck and `npm test` are the verdict. Every command runs so the report is complete, and
+      # they run for an empty patch too: "no tests needed" must not hide a red suite.
+      - name: Backend typecheck
+        id: backend_typecheck
+        if: steps.guard.outputs.ok == 'true' && steps.apply.outcome != 'failure'
+        continue-on-error: true
+        run: npm --prefix backend run typecheck
+
+      - name: Backend tests
+        id: backend_test
+        if: steps.guard.outputs.ok == 'true' && steps.apply.outcome != 'failure'
+        continue-on-error: true
+        run: npm --prefix backend test -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest-backend.json"
+
+      - name: Frontend typecheck
+        id: frontend_typecheck
+        if: steps.guard.outputs.ok == 'true' && steps.apply.outcome != 'failure'
+        continue-on-error: true
+        run: npm --prefix frontend run typecheck
+
+      - name: Frontend tests
+        id: frontend_test
+        if: steps.guard.outputs.ok == 'true' && steps.apply.outcome != 'failure'
+        continue-on-error: true
+        run: npm --prefix frontend test -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest-frontend.json"
+
+      # Report only: per-file thresholds may fail it, it never gates.
+      - name: Coverage (report only)
+        if: steps.guard.outputs.ok == 'true' && steps.apply.outcome != 'failure'
+        run: |
+          npm --prefix backend run test:coverage || true
+          npm --prefix frontend run test:coverage || true
+
+      - name: Summarise verification
+        if: always()
+        env:
+          OUTCOME_BASELINE: ${{ steps.baseline.outcome }}
+          OUTCOME_BACKEND_TYPECHECK: ${{ steps.backend_typecheck.outcome }}
+          OUTCOME_BACKEND_TEST: ${{ steps.backend_test.outcome }}
+          OUTCOME_FRONTEND_TYPECHECK: ${{ steps.frontend_typecheck.outcome }}
+          OUTCOME_FRONTEND_TEST: ${{ steps.frontend_test.outcome }}
+        run: >-
+          node .github/scripts/render-report.mjs verify --report "$RUNNER_TEMP/agent-output/report.json"
+          --results "$RUNNER_TEMP" --out "$RUNNER_TEMP/verify-output/verify.json"
+
+      - name: Upload verification output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verify-output
+          path: ${{ runner.temp }}/verify-output/
+
+      - name: Fail on rejected patch or failing checks
+        if: >-
+          steps.guard.outcome != 'success'
+          || steps.apply.outcome == 'failure'
+          || steps.backend_typecheck.outcome == 'failure'
+          || steps.backend_test.outcome == 'failure'
+          || steps.frontend_typecheck.outcome == 'failure'
+          || steps.frontend_test.outcome == 'failure'
+        run: echo "::error::Verification failed; see the steps above" && exit 1
+
+  publish:
+    name: Publish results
+    needs: [generate, verify]
+    if: ${{ !cancelled() && needs.generate.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      REPO: ${{ github.repository }}
+    steps:
+      # The verified SHA, not the branch tip. Credentials stay in git config for the push.
+      - name: Check out the verified PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Download agent output
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-output
+          path: ${{ runner.temp }}/agent-output
+
+      - name: Download verification output
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: verify-output
+          path: ${{ runner.temp }}/verify-output
+
+      - name: Check patch (trust boundary)
+        continue-on-error: true
+        run: node .github/scripts/check-patch.mjs "$RUNNER_TEMP/agent-output/tests.patch" | tee "$RUNNER_TEMP/guard.json"
+
+      - name: Decide whether to push
+        id: decide
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: >-
+          node .github/scripts/render-report.mjs decide --agent-dir "$RUNNER_TEMP/agent-output"
+          --verify "$RUNNER_TEMP/verify-output/verify.json" --guard "$RUNNER_TEMP/guard.json"
+
+      - name: Commit and push tests
+        id: push
+        if: steps.decide.outputs.push == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # The lease below cannot see a merge that left the branch in place.
+          if [ "$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .state)" != open ]; then
+            echo "result=superseded" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The lease is only safe for a child of the verified commit.
+          [ "$(git rev-parse HEAD)" = "$HEAD_SHA" ] || { echo "::error::checkout is not at the verified commit"; exit 1; }
+          git apply --index "$RUNNER_TEMP/agent-output/tests.patch"
+          # [skip actions]: a push with GITHUB_TOKEN would otherwise leave a run waiting for approval.
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --no-verify --quiet -m 'test: add unit tests for changed code' \
+            -m "Generated and verified by workflow run $RUN_URL" -m '[skip actions]'
+          # The lease makes the push compare-and-swap: it lands only while the branch is still at the
+          # verified commit, so it cannot recreate a branch deleted after a merge. The new commit is a
+          # child of HEAD_SHA, so nothing is ever overwritten.
+          if git push --no-verify --force-with-lease="refs/heads/$HEAD_REF:$HEAD_SHA" origin "HEAD:refs/heads/$HEAD_REF"; then
+            { echo "result=pushed"; echo "sha=$(git rev-parse HEAD)"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A rejection means the branch moved, unless it still points at HEAD_SHA.
+          remote_sha=$(git ls-remote origin "refs/heads/$HEAD_REF" | cut -f1) || remote_sha=unknown
+          if [ "$remote_sha" != "$HEAD_SHA" ] && [ "$remote_sha" != unknown ]; then
+            echo "result=superseded" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set commit status on the pushed commit
+        if: steps.push.outputs.result == 'pushed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_SHA: ${{ steps.push.outputs.sha }}
+        run: >-
+          gh api --method POST "repos/$REPO/statuses/$NEW_SHA"
+          -f state=success -f context=unit-test-agent/verify -f target_url="$RUN_URL"
+          -f description='Generated tests passed typecheck and npm test' > /dev/null
+
+      - name: Render report
+        id: render
+        if: ${{ !cancelled() }}
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          PUSH_RESULT: ${{ steps.push.outputs.result }}
+          NEW_SHA: ${{ steps.push.outputs.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/render-report.mjs comment --agent-dir "$RUNNER_TEMP/agent-output" \
+            --verify "$RUNNER_TEMP/verify-output/verify.json" --guard "$RUNNER_TEMP/guard.json" --out "$RUNNER_TEMP/comment.md"
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post or update the PR comment
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          jq -Rs '{body: .}' "$RUNNER_TEMP/comment.md" > "$RUNNER_TEMP/comment.json"
+          # Same marker as render-report.mjs; only our own bot's comment is updated.
+          ids=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" --jq \
+            '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- unit-test-agent -->"))) | .id')
+          id=${ids%%$'\n'*}
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$id" --input "$RUNNER_TEMP/comment.json" > /dev/null
+          else
+            gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" --input "$RUNNER_TEMP/comment.json" > /dev/null
+          fi
+
+      - name: Set job result from the outcome
+        if: ${{ !cancelled() }}
+        env:
+          OK: ${{ steps.render.outputs.ok }}
+          OUTCOME: ${{ steps.render.outputs.outcome }}
+        run: |
+          echo "Outcome: ${OUTCOME:-unknown}"
+          [ "$OK" = 'true' ] || { echo "::error::Unit test agent outcome: ${OUTCOME:-unknown}"; exit 1; }
