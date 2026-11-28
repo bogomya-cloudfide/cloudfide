@@ -1,0 +1,47 @@
+{
+  "claudeMdExcludes": ["**/CLAUDE.md", "**/CLAUDE.local.md", "**/.claude/rules/**"],
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
+    "network": { "allowLocalBinding": true },
+    "filesystem": { "allowRead": ["~/.nvm"] }
+  },
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "blockReadsOutsideWorkingDirectories": true,
+    "allow": [
+      "Skill(selecting-test-targets)",
+      "Skill(writing-backend-tests)",
+      "Skill(writing-frontend-tests)",
+      "Skill(verifying-tests)",
+      "Edit(backend/tests/**/*.ts)",
+      "Edit(frontend/src/**/*.test.ts)",
+      "Edit(frontend/src/**/*.test.tsx)",
+      "Edit(frontend/src/test/**/*.ts)",
+      "Edit(frontend/src/test/**/*.tsx)",
+      "Edit(frontend/src/design-system/mocks.tsx)",
+      "Bash(npm --prefix backend test *)",
+      "Bash(npm --prefix frontend test *)",
+      "Bash(npm --prefix backend run typecheck)",
+      "Bash(npm --prefix frontend run typecheck)",
+      "Bash(npm --prefix backend run test:coverage)",
+      "Bash(npm --prefix frontend run test:coverage)",
+      "Bash(npm --prefix frontend exec -- prettier --write *)",
+      "Bash(git diff *)",
+      "Bash(git merge-base *)",
+      "Bash(git log --format=%an --name-only *)"
+    ],
+    "deny": [
+      "Edit(frontend/src/test/setup.ts)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Bash(git * --output*)",
+      "Bash(git diff *--no-index*)",
+      "WebFetch",
+      "WebSearch",
+      "Agent"
+    ]
+  }
+}
