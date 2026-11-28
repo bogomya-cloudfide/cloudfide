@@ -69,6 +69,19 @@ it('is not overwritten by a slower list fetch started before the save', async ()
   expect(client.getQueryData(todoKeys.list)).toEqual([saved])
 })
 
+it('invalidates the stats after updating', async () => {
+  vi.mocked(todosApi.update).mockResolvedValue(todoFixture)
+  const { client, result } = setup()
+  client.setQueryData(todoKeys.stats, {
+    total: 1,
+    active: 1,
+    completed: 0,
+    overdue: 0,
+  })
+  await act(() => result.current.mutateAsync({ id: 1, input: {} }))
+  expect(client.getQueryState(todoKeys.stats)?.isInvalidated).toBe(true)
+})
+
 it('keeps the cached list when the update fails', async () => {
   vi.mocked(todosApi.update).mockRejectedValue(new Error('boom'))
   const { client, result } = setup()

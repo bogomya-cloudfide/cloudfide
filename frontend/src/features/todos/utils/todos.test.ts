@@ -69,6 +69,19 @@ describe('selectTodos', () => {
   })
 })
 
+describe('selectTodos overdue filter', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('keeps only open tasks due before today', () => {
+    vi.setSystemTime(new Date(2026, 9, 15, 12))
+    const late: Todo = { ...base, id: 2, due_date: '2026-10-14' }
+    const today: Todo = { ...base, id: 3, due_date: '2026-10-15' }
+    const doneLate: Todo = { ...late, id: 4, completed: true }
+    const todos = [base, late, today, doneLate]
+    expect(selectTodos(todos, 'overdue', '', 'newest')).toEqual([late])
+  })
+})
+
 describe('validateTodo', () => {
   const valid = {
     title: 'Task',

@@ -56,6 +56,19 @@ it('is not overwritten by a slower list fetch started before the delete', async 
   expect(client.getQueryData(todoKeys.list)).toEqual([other])
 })
 
+it('invalidates the stats after deleting', async () => {
+  vi.mocked(todosApi.remove).mockResolvedValue(undefined)
+  const { client, result } = setup()
+  client.setQueryData(todoKeys.stats, {
+    total: 1,
+    active: 1,
+    completed: 0,
+    overdue: 0,
+  })
+  await act(() => result.current.mutateAsync(1))
+  expect(client.getQueryState(todoKeys.stats)?.isInvalidated).toBe(true)
+})
+
 it('keeps the cached list when deletion fails', async () => {
   vi.mocked(todosApi.remove).mockRejectedValue(new Error('boom'))
   const { client, result } = setup()

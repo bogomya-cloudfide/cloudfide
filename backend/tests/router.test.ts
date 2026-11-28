@@ -18,6 +18,14 @@ it('lists tasks from the repository', async () => {
   expect(response.body).toEqual([todo]);
   expect(repository.list).toHaveBeenCalledOnce();
 });
+it('summarizes tasks on /stats without treating "stats" as an id', async () => {
+  const { app, repository } = setup();
+  repository.list.mockResolvedValue([{ ...todo, id: 1, due_date: '2000-01-01' }, { ...todo, id: 2, completed: true, due_date: '2000-01-01' }, { ...todo, id: 3, due_date: null }]);
+  const response = await request(app).get('/api/todos/stats');
+  expect(response.status).toBe(200);
+  expect(response.body).toEqual({ total: 3, active: 2, completed: 1, overdue: 1 });
+  expect(repository.get).not.toHaveBeenCalled();
+});
 it('creates tasks with trimmed input and defaults', async () => {
   const { app, repository } = setup();
   const response = await request(app).post('/api/todos').send({ title: '  Plan the sprint  ', priority: 'high' });
